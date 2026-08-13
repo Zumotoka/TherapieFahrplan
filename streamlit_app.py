@@ -1,24 +1,42 @@
 import streamlit as st
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
 import urllib.parse
+import math
 
 st.set_page_config(page_title="Therapie-Fahrplan", page_icon="🚗")
 
-st.title("🚗 Therapie-Fahrplan")
-st.write("Verteile die Fahrer intelligent, beachte die Auto-Kapazität (max. 4 Mitfahrer) und generiere direkte Navi-Links!")
+st.title("🚗 Therapie-Fahrplan (Ohne Installationen)")
+st.write("Verteile Fahrer und Mitfahrer, beachte die 4er-Grenze und erhalte direkte Google-Maps-Links!")
 
-# --- 1. GEODATEN FUNKTION ---
-@st.cache_data
-def get_coordinates(ort):
-    geolocator = Nominatim(user_agent="therapie_fahrplan_ebermannstadt")
-    try:
-        location = geolocator.geocode(f"{ort}, Bayern, Deutschland")
-        if location:
-            return (location.latitude, location.longitude)
-        return None
-    except:
-        return None
+# --- 1. Feste Koordinaten (Ungefähre GPS-Daten für die Region, ganz ohne geopy) ---
+ort_koordinaten = {
+    "Wiesenthau": (49.711, 11.162),
+    "Wannbach": (49.742, 11.233),
+    "Unterzaunsbach": (49.731, 11.205),
+    "Ebermannstadt": (49.774, 11.082),
+    "Dürrbrunn": (49.789, 11.192),
+    "Kleingesee": (49.805, 11.312),
+    "Kanndorf": (49.761, 11.121),
+    "Gasseldorf": (49.791, 11.102),
+    "Türkelstein": (49.691, 11.281),
+    "Forchheim": (49.721, 11.058),
+    "Nürnberg": (49.452, 11.076)
+}
+
+# Hilfsfunktion für Luftlinie (Haversine-Formel in purem Python)
+def berechne_distanz(ort1, ort2):
+    coord1 = ort_koordinaten.get(ort1, (49.774, 11.082)) # Fallback Ebermannstadt
+    coord2 = ort_koordinaten.get(ort2, (49.774, 11.082))
+    
+    lat1, lon1 = math.radians(coord1[0]), math.radians(coord1[1])
+    lat2, lon2 = math.radians(coord2[0]), math.radians(coord2[1])
+    
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    r = 6371 # Erdradius in km
+    return c * r
 
 # --- 2. GÄSTE-LOGIK ---
 if 'gaeste' not in st.session_state:
@@ -37,14 +55,18 @@ feste_gruppe = {
 }
 
 st.header("👥 Einmalige Gäste")
-col1, col2 = st.columns(2)
-neuer_gast_name = col1.text_input("Name des Gastes:")
-neuer_gast_ort = col2.text_input("Wohnort (z.B. Forchheim):")
+col1, col2, col3 = st.columns(3)
+neuer_gast_name = col1.text_input("Name:")
+neuer_gast_ort = col2.text_input("Wohnort:")
+gast_lat = col3.number_input("Ungefähre Breitenangabe (optional, z.B. 49.7)", value=49.7)
 
 if st.button("Gast hinzufügen"):
     if neuer_gast_name and neuer_gast_ort:
         st.session_state.gaeste[neuer_gast_name] = neuer_gast_ort
-        st.success(f"{neuer_gast_name} aus {neuer_gast_ort} wurde hinzugefügt!")
+        # Ort direkt in die Liste aufnehmen
+        if neuer_gast_ort not in ort_koordinaten:
+            ort_koordinaten[neuer_gast_ort] = (gast_lat, 11.1)
+        st.success(f"{neuer_gast_name} aus {neuer_gast_ort} hinzugefügt!")
     else:
         st.warning("Bitte Name und Wohnort eingeben.")
 
@@ -55,7 +77,7 @@ st.divider()
 
 # --- 3. ZIEL & AUSWAHL ---
 st.header("🎯 Wo geht's hin?")
-ziel = st.text_input("Zieladresse (z.B. Cinecittà Nürnberg):", "Nürnberg")
+ziel = st.text_input("Zieladresse / Ort:", "Nürnberg")
 
 st.header("1. Wer fährt heute?")
 fahrer = st.multiselect(
@@ -72,10 +94,9 @@ mitfahrer = st.multiselect(
     format_func=lambda x: f"{x} ({alle_personen[x]})"
 )
 
-# Option für Mitfahrer ohne Umweg
 st.header("3. Wer steigt direkt zu? (Ohne Umweg)")
 mitfahrer_ohne_umweg = st.multiselect(
-    "Diese Personen belegen einen Platz im Auto, werden aber NICHT ins Navi einprogrammiert:", 
+    "Diese Personen belegen einen Platz, werden aber im Navi ignoriert:", 
     mitfahrer, 
     format_func=lambda x: f"{x} ({alle_personen[x]})"
 )
@@ -93,29 +114,21 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
         if len(mitfahrer) > max_kapazitaet:
             st.error(f"Achtung! Ihr habt {len(mitfahrer)} Mitfahrer, aber {len(fahrer)} Autos können maximal {max_kapazitaet} Personen mitnehmen.")
         else:
-            st.info("Berechne die optimalen Zuteilungen...")
-            
-            fahrer_coords = {f: get_coordinates(alle_personen[f]) for f in fahrer}
-            mitfahrer_coords = {m: get_coordinates(alle_personen[m]) for m in mitfahrer}
-            
             aufteilung = {f: [] for f in fahrer}
             unverteilt = list(mitfahrer)
             
+            # Distanzen berechnen und sortieren
             distanz_liste = []
             for m in unverteilt:
-                m_coord = mitfahrer_coords[m]
-                if not m_coord:
-                    st.warning(f"Ort für {m} nicht gefunden!")
-                    unverteilt.remove(m)
-                    continue
+                m_ort = alle_personen[m]
                 for f in fahrer:
-                    f_coord = fahrer_coords[f]
-                    if f_coord:
-                        dist = geodesic(f_coord, m_coord).km
-                        distanz_liste.append((dist, f, m))
+                    f_ort = alle_personen[f]
+                    dist = berechne_distanz(f_ort, m_ort)
+                    distanz_liste.append((dist, f, m))
             
             distanz_liste.sort(key=lambda x: x[0])
             
+            # Zuteilung (max 4 pro Auto)
             for dist, f, m in distanz_liste:
                 if m in unverteilt and len(aufteilung[f]) < 4:
                     aufteilung[f].append(m)
@@ -136,15 +149,15 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
                     st.markdown(f"[📍 Google Maps Route für {f} öffnen]({gmaps_link})")
                 
                 else:
-                    f_coord = fahrer_coords[f]
+                    # Wegpunkte sortieren
                     sortierte_mitfahrer = []
                     unbesucht = zugewiesene_mitfahrer.copy()
-                    aktueller_standort = f_coord
+                    aktueller_ort = f_ort
                     
                     while unbesucht:
-                        naechster = min(unbesucht, key=lambda x: geodesic(aktueller_standort, mitfahrer_coords[x]).km)
+                        naechster = min(unbesucht, key=lambda x: berechne_distanz(aktueller_ort, alle_personen[x]))
                         sortierte_mitfahrer.append(naechster)
-                        aktueller_standort = mitfahrer_coords[naechster]
+                        aktueller_ort = alle_personen[naechster]
                         unbesucht.remove(naechster)
                     
                     st.write(f"**Mitfahrer ({len(sortierte_mitfahrer)}/4 Plätze belegt):**")
@@ -155,7 +168,6 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
                     url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
                     url_dest = urllib.parse.quote(ziel)
                     
-                    # Wegpunkte bauen, aber Leute "ohne Umweg" aussortieren
                     wegpunkte = [urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland") 
                                  for m in sortierte_mitfahrer if m not in mitfahrer_ohne_umweg]
                     
