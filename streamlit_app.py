@@ -3,48 +3,64 @@ import streamlit as st
 st.title("🚗 Therapie-Fahrplan")
 st.write("Hier verteilen wir unsere Fahrer und berechnen die effizientesten Routen!")
 
-# Eure komplette Gruppe mit den genauen Wohnorten
-freunde_orte = {
+# Das Gedächtnis der App einrichten: Eine Liste für alle Gäste
+if 'gaeste' not in st.session_state:
+    st.session_state.gaeste = {}
+
+# Eure feste Gruppe (Ortsnamen final korrigiert)
+feste_gruppe = {
     "Jona": "Wiesenthau",
     "Till": "Wannbach",
     "Felix": "Unterzaunsbach",
     "Valentin": "Ebermannstadt",
     "Tim": "Dürrbrunn",
-    "Jonas": "Plein-Gesee",
-    "Moritz Taglauer": "Kandorf",
-    "Moritz Burkhard": "Kasseldorf",
-    "Andreas": "Türkenstein"
+    "Jonas": "Kleingesee",
+    "Moritz Taglauer": "Kanndorf",
+    "Moritz Burkhard": "Gasseldorf",
+    "Andreas": "Türkelstein"
 }
 
-st.header("👥 Einmaliger Gast")
-st.write("Fährt heute noch jemand spontan mit?")
+st.header("👥 Einmalige Gäste")
+st.write("Fahren heute noch Leute spontan mit?")
 
-# st.columns(2) erstellt zwei Spalten, damit die Felder schön nebeneinander stehen
+# Eingabefelder für neue Gäste
 col1, col2 = st.columns(2)
-gast_name = col1.text_input("Name des Gastes:")
-gast_ort = col2.text_input("Wohnort (z.B. Forchheim):")
+neuer_gast_name = col1.text_input("Name des Gastes:")
+neuer_gast_ort = col2.text_input("Wohnort (z.B. Forchheim):")
 
-# Wenn in beide Felder etwas eingetippt wurde, wird der Gast zur Liste hinzugefügt
-if gast_name and gast_ort:
-    freunde_orte[gast_name] = gast_ort
+# Ein Button, um den Gast zur Liste hinzuzufügen
+if st.button("Gast hinzufügen"):
+    if neuer_gast_name and neuer_gast_ort:
+        st.session_state.gaeste[neuer_gast_name] = neuer_gast_ort
+        st.success(f"{neuer_gast_name} aus {neuer_gast_ort} wurde hinzugefügt!")
+    else:
+        st.warning("Bitte Name und Wohnort eingeben.")
 
-# Erst jetzt holen wir uns die Liste aller Namen (inklusive des möglichen Gastes)
-freunde = list(freunde_orte.keys())
+# Anzeigen der bisher hinzugefügten Gäste
+if st.session_state.gaeste:
+    st.write("Bisher hinzugefügte Gäste:")
+    for gast, ort in st.session_state.gaeste.items():
+        st.write(f"- {gast} ({ort})")
+
+# Eine gemeinsame Liste aus der festen Gruppe und den Gästen erstellen
+alle_personen = {**feste_gruppe, **st.session_state.gaeste}
+alle_namen = list(alle_personen.keys())
+
+st.divider()
 
 st.header("1. Wer fährt heute?")
 fahrer = st.multiselect(
     "Fahrer auswählen:", 
-    freunde, 
-    format_func=lambda x: f"{x} ({freunde_orte[x]})"
+    alle_namen, 
+    format_func=lambda x: f"{x} ({alle_personen[x]})"
 )
 
 st.header("2. Wer muss abgeholt werden?")
-# Logik: Wer fährt, verschwindet automatisch aus der Mitfahrer-Liste
-mitfahrer_optionen = [person for person in freunde if person not in fahrer]
+mitfahrer_optionen = [person for person in alle_namen if person not in fahrer]
 mitfahrer = st.multiselect(
     "Mitfahrer auswählen:", 
     mitfahrer_optionen,
-    format_func=lambda x: f"{x} ({freunde_orte[x]})"
+    format_func=lambda x: f"{x} ({alle_personen[x]})"
 )
 
 st.divider() 
@@ -56,4 +72,6 @@ if st.button("Route berechnen"):
         st.error("Bitte wähle mindestens einen Mitfahrer aus!")
     else:
         st.success(f"App ist bereit! {len(fahrer)} Auto(s) holen {len(mitfahrer)} Person(en) ab.")
-        st.info("Im nächsten Schritt bereiten wir die Daten für die echte Karte vor.")
+        
+        st.write("Gewählte Fahrer:", ", ".join(fahrer))
+        st.write("Gewählte Mitfahrer:", ", ".join(mitfahrer))
