@@ -55,7 +55,7 @@ st.divider()
 
 # --- 3. ZIEL & AUSWAHL ---
 st.header("🎯 Wo geht's hin?")
-ziel = st.text_input("Zieladresse (z.B. Cinecittà Nürnberg oder Ebermannstadt):", "Nürnberg")
+ziel = st.text_input("Zieladresse (z.B. Cinecittà Nürnberg):", "Nürnberg")
 
 st.header("1. Wer fährt heute?")
 fahrer = st.multiselect(
@@ -72,6 +72,14 @@ mitfahrer = st.multiselect(
     format_func=lambda x: f"{x} ({alle_personen[x]})"
 )
 
+# Option für Mitfahrer ohne Umweg
+st.header("3. Wer steigt direkt zu? (Ohne Umweg)")
+mitfahrer_ohne_umweg = st.multiselect(
+    "Diese Personen belegen einen Platz im Auto, werden aber NICHT ins Navi einprogrammiert:", 
+    mitfahrer, 
+    format_func=lambda x: f"{x} ({alle_personen[x]})"
+)
+
 st.divider() 
 
 # --- 4. ROUTEN BERECHNEN ---
@@ -81,26 +89,23 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
     elif not ziel:
         st.error("Bitte gib ein Ziel ein!")
     else:
-        # Checken, ob wir überhaupt genug Autos für alle haben (1 Fahrer = 4 Mitfahrer)
         max_kapazitaet = len(fahrer) * 4
         if len(mitfahrer) > max_kapazitaet:
-            st.error(f"Achtung! Ihr habt {len(mitfahrer)} Mitfahrer, aber {len(fahrer)} Autos können maximal {max_kapazitaet} Personen mitnehmen. Ihr braucht noch einen Fahrer!")
+            st.error(f"Achtung! Ihr habt {len(mitfahrer)} Mitfahrer, aber {len(fahrer)} Autos können maximal {max_kapazitaet} Personen mitnehmen.")
         else:
             st.info("Berechne die optimalen Zuteilungen...")
             
-            # Koordinaten abrufen
             fahrer_coords = {f: get_coordinates(alle_personen[f]) for f in fahrer}
             mitfahrer_coords = {m: get_coordinates(alle_personen[m]) for m in mitfahrer}
             
             aufteilung = {f: [] for f in fahrer}
             unverteilt = list(mitfahrer)
             
-            # Alle möglichen Kombinationen (Fahrer <-> Mitfahrer) berechnen
             distanz_liste = []
             for m in unverteilt:
                 m_coord = mitfahrer_coords[m]
                 if not m_coord:
-                    st.warning(f"Ort für {m} ({alle_personen[m]}) nicht gefunden!")
+                    st.warning(f"Ort für {m} nicht gefunden!")
                     unverteilt.remove(m)
                     continue
                 for f in fahrer:
@@ -109,10 +114,8 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
                         dist = geodesic(f_coord, m_coord).km
                         distanz_liste.append((dist, f, m))
             
-            # Nach kürzester Distanz sortieren
             distanz_liste.sort(key=lambda x: x[0])
             
-            # Zuteilung durchführen (mit Limit von 4 Mitfahrern pro Auto)
             for dist, f, m in distanz_liste:
                 if m in unverteilt and len(aufteilung[f]) < 4:
                     aufteilung[f].append(m)
@@ -120,7 +123,6 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
 
             st.success("Hier sind die fertigen Fahrpläne!")
             
-            # Routen für jeden Fahrer erstellen
             for f in fahrer:
                 st.subheader(f"🚘 Auto von {f}")
                 f_ort = alle_personen[f]
@@ -134,7 +136,6 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
                     st.markdown(f"[📍 Google Maps Route für {f} öffnen]({gmaps_link})")
                 
                 else:
-                    # Wegpunkte so sortieren, dass das Auto logisch von Ort zu Ort fährt
                     f_coord = fahrer_coords[f]
                     sortierte_mitfahrer = []
                     unbesucht = zugewiesene_mitfahrer.copy()
@@ -146,19 +147,23 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
                         aktueller_standort = mitfahrer_coords[naechster]
                         unbesucht.remove(naechster)
                     
-                    # Liste der Mitfahrer anzeigen
                     st.write(f"**Mitfahrer ({len(sortierte_mitfahrer)}/4 Plätze belegt):**")
                     for i, m in enumerate(sortierte_mitfahrer):
-                        st.write(f"{i+1}. {m} ({alle_personen[m]})")
+                        zusatz = " *(steigt ohne Umweg zu)*" if m in mitfahrer_ohne_umweg else ""
+                        st.write(f"{i+1}. {m} ({alle_personen[m]}){zusatz}")
                     
-                    # Google Maps Link zusammenbauen
                     url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
                     url_dest = urllib.parse.quote(ziel)
                     
-                    wegpunkte = [urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland") for m in sortierte_mitfahrer]
-                    url_waypoints = "|".join(wegpunkte)
+                    # Wegpunkte bauen, aber Leute "ohne Umweg" aussortieren
+                    wegpunkte = [urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland") 
+                                 for m in sortierte_mitfahrer if m not in mitfahrer_ohne_umweg]
                     
-                    gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}&waypoints={url_waypoints}"
+                    if wegpunkte:
+                        url_waypoints = "|".join(wegpunkte)
+                        gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}&waypoints={url_waypoints}"
+                    else:
+                        gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}"
                     
                     st.markdown(f"**[📍 Google Maps Route für {f} öffnen]({gmaps_link})**")
                 
