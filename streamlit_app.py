@@ -3,6 +3,8 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 
+st.set_page_config(page_title="Therapie-Fahrplan", page_icon="🚗")
+
 st.title("🚗 Therapie-Fahrplan")
 st.write("Hier verteilen wir unsere Fahrer und berechnen die effizientesten Routen!")
 
@@ -26,6 +28,7 @@ def get_coordinates(ort):
 if 'gaeste' not in st.session_state:
     st.session_state.gaeste = {}
 
+# Eure feste Gruppe (Ortsnamen final korrigiert)
 feste_gruppe = {
     "Jona": "Wiesenthau",
     "Till": "Wannbach",
@@ -39,10 +42,14 @@ feste_gruppe = {
 }
 
 st.header("👥 Einmalige Gäste")
+st.write("Fahren heute noch Leute spontan mit?")
+
+# Eingabefelder für neue Gäste
 col1, col2 = st.columns(2)
 neuer_gast_name = col1.text_input("Name des Gastes:")
 neuer_gast_ort = col2.text_input("Wohnort (z.B. Forchheim):")
 
+# Ein Button, um den Gast zur Liste hinzuzufügen
 if st.button("Gast hinzufügen"):
     if neuer_gast_name and neuer_gast_ort:
         st.session_state.gaeste[neuer_gast_name] = neuer_gast_ort
@@ -50,6 +57,13 @@ if st.button("Gast hinzufügen"):
     else:
         st.warning("Bitte Name und Wohnort eingeben.")
 
+# Anzeigen der bisher hinzugefügten Gäste
+if st.session_state.gaeste:
+    st.write("Bisher hinzugefügte Gäste:")
+    for gast, ort in st.session_state.gaeste.items():
+        st.write(f"- {gast} ({ort})")
+
+# Eine gemeinsame Liste aus der festen Gruppe und den Gästen erstellen
 alle_personen = {**feste_gruppe, **st.session_state.gaeste}
 alle_namen = list(alle_personen.keys())
 
