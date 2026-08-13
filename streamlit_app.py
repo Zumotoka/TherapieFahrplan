@@ -7,7 +7,7 @@ st.write("Hier verteilen wir unsere Fahrer und berechnen die effizientesten Rout
 if 'gaeste' not in st.session_state:
     st.session_state.gaeste = {}
 
-# Eure feste Gruppe (Ortsnamen final korrigiert)
+# Eure feste Gruppe
 feste_gruppe = {
     "Jona": "Wiesenthau",
     "Till": "Wannbach",
@@ -15,9 +15,9 @@ feste_gruppe = {
     "Valentin": "Ebermannstadt",
     "Tim": "Dürrbrunn",
     "Jonas": "Kleingesee",
-    "Moritz Taglauer": "Kanndorf",
+    "Moritz Taglauer": "Kandorf",
     "Moritz Burkhard": "Gasseldorf",
-    "Andreas": "Türkelstein"
+    "Andreas": "Türkenstein"
 }
 
 st.header("👥 Einmalige Gäste")
