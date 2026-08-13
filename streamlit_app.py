@@ -1,25 +1,21 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
+from geopy.distance import geodesic
+import urllib.parse
 
 st.set_page_config(page_title="Therapie-Fahrplan", page_icon="🚗")
 
 st.title("🚗 Therapie-Fahrplan")
-st.write("Hier verteilen wir unsere Fahrer und berechnen die effizientesten Routen!")
+st.write("Verteile die Fahrer und generiere direkte Google Maps Navi-Links!")
 
 # --- 1. GEODATEN FUNKTION ---
-# st.cache_data sorgt dafür, dass Koordinaten gespeichert werden und die App schnell bleibt
 @st.cache_data
 def get_coordinates(ort):
-    # Der user_agent ist quasi unser Name, mit dem wir beim Kartendienst anklopfen
     geolocator = Nominatim(user_agent="therapie_fahrplan_ebermannstadt")
     try:
-        # Wir fügen Bayern hinzu, damit kleine Orte fehlerfrei gefunden werden!
-        such_anfrage = f"{ort}, Bayern, Deutschland"
-        location = geolocator.geocode(such_anfrage)
+        location = geolocator.geocode(f"{ort}, Bayern, Deutschland")
         if location:
-            return [location.latitude, location.longitude]
+            return (location.latitude, location.longitude)
         return None
     except:
         return None
@@ -28,7 +24,6 @@ def get_coordinates(ort):
 if 'gaeste' not in st.session_state:
     st.session_state.gaeste = {}
 
-# Eure feste Gruppe (Ortsnamen final korrigiert)
 feste_gruppe = {
     "Jona": "Wiesenthau",
     "Till": "Wannbach",
@@ -42,14 +37,10 @@ feste_gruppe = {
 }
 
 st.header("👥 Einmalige Gäste")
-st.write("Fahren heute noch Leute spontan mit?")
-
-# Eingabefelder für neue Gäste
 col1, col2 = st.columns(2)
 neuer_gast_name = col1.text_input("Name des Gastes:")
 neuer_gast_ort = col2.text_input("Wohnort (z.B. Forchheim):")
 
-# Ein Button, um den Gast zur Liste hinzuzufügen
 if st.button("Gast hinzufügen"):
     if neuer_gast_name and neuer_gast_ort:
         st.session_state.gaeste[neuer_gast_name] = neuer_gast_ort
@@ -57,19 +48,15 @@ if st.button("Gast hinzufügen"):
     else:
         st.warning("Bitte Name und Wohnort eingeben.")
 
-# Anzeigen der bisher hinzugefügten Gäste
-if st.session_state.gaeste:
-    st.write("Bisher hinzugefügte Gäste:")
-    for gast, ort in st.session_state.gaeste.items():
-        st.write(f"- {gast} ({ort})")
-
-# Eine gemeinsame Liste aus der festen Gruppe und den Gästen erstellen
 alle_personen = {**feste_gruppe, **st.session_state.gaeste}
 alle_namen = list(alle_personen.keys())
 
 st.divider()
 
-# --- 3. AUSWAHL-MENÜS ---
+# --- 3. ZIEL & AUSWAHL ---
+st.header("🎯 Wo geht's hin?")
+ziel = st.text_input("Zieladresse (z.B. Cinecittà Nürnberg oder Ebermannstadt):", "Nürnberg")
+
 st.header("1. Wer fährt heute?")
 fahrer = st.multiselect(
     "Fahrer auswählen:", 
@@ -87,45 +74,87 @@ mitfahrer = st.multiselect(
 
 st.divider() 
 
-# --- 4. KARTE & ROUTE BERECHNEN ---
-if st.button("Route berechnen & Karte anzeigen"):
+# --- 4. ROUTEN BERECHNEN ---
+if st.button("🚗 Routen & Aufteilung berechnen"):
     if not fahrer:
         st.error("Bitte wähle mindestens einen Fahrer aus!")
-    elif not mitfahrer:
-        st.error("Bitte wähle mindestens einen Mitfahrer aus!")
+    elif not ziel:
+        st.error("Bitte gib ein Ziel ein!")
     else:
-        st.success("Orte werden auf der Karte gesucht...")
+        st.info("Berechne die optimalen Zuteilungen...")
         
-        # Karte erstellen und auf den Raum Ebermannstadt (grob) zentrieren
-        m = folium.Map(location=[49.782, 11.186], zoom_start=11)
+        # Koordinaten für alle abrufen
+        fahrer_coords = {f: get_coordinates(alle_personen[f]) for f in fahrer}
+        mitfahrer_coords = {m: get_coordinates(alle_personen[m]) for m in mitfahrer}
         
-        # Alle Fahrer als GRÜNE Autos auf die Karte setzen
-        for f in fahrer:
-            ort = alle_personen[f]
-            coords = get_coordinates(ort)
-            if coords:
-                folium.Marker(
-                    location=coords,
-                    popup=f"{f} (Fahrer aus {ort})",
-                    tooltip=f,
-                    icon=folium.Icon(color="green", icon="car", prefix="fa")
-                ).add_to(m)
-            else:
-                st.warning(f"Konnte den Ort {ort} für {f} nicht finden.")
+        # Aufteilung: Jeder Mitfahrer sucht sich den Fahrer, der ihm am nächsten ist
+        aufteilung = {f: [] for f in fahrer}
+        
+        for m, m_coord in mitfahrer_coords.items():
+            if not m_coord:
+                st.warning(f"Ort für {m} ({alle_personen[m]}) nicht gefunden!")
+                continue
                 
-        # Alle Mitfahrer als BLAUE Personen auf die Karte setzen
-        for m_person in mitfahrer:
-            ort = alle_personen[m_person]
-            coords = get_coordinates(ort)
-            if coords:
-                folium.Marker(
-                    location=coords,
-                    popup=f"{m_person} (Mitfahrer aus {ort})",
-                    tooltip=m_person,
-                    icon=folium.Icon(color="blue", icon="user", prefix="fa")
-                ).add_to(m)
-            else:
-                st.warning(f"Konnte den Ort {ort} für {m_person} nicht finden.")
+            # Finde den nächsten Fahrer
+            naechster_fahrer = None
+            min_distanz = float('inf')
+            
+            for f, f_coord in fahrer_coords.items():
+                if f_coord:
+                    distanz = geodesic(f_coord, m_coord).km
+                    if distanz < min_distanz:
+                        min_distanz = distanz
+                        naechster_fahrer = f
+                        
+            if naechster_fahrer:
+                aufteilung[naechster_fahrer].append(m)
 
-        # Die Karte in der App anzeigen
-        st_folium(m, width=700, height=500)
+        # Routen sortieren und Links generieren
+        st.success("Hier sind die fertigen Fahrpläne!")
+        
+        for f in fahrer:
+            st.subheader(f"🚘 Auto von {f}")
+            f_ort = alle_personen[f]
+            zugewiesene_mitfahrer = aufteilung[f]
+            
+            if not zugewiesene_mitfahrer:
+                st.write("Fährt direkt zum Ziel (keine Mitfahrer).")
+                # Link ohne Wegpunkte
+                url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
+                url_dest = urllib.parse.quote(ziel)
+                gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}"
+                st.markdown(f"[📍 Google Maps Route für {f} öffnen]({gmaps_link})")
+            
+            else:
+                # Wegpunkte nach Entfernung vom Fahrer sortieren (damit er nicht hin und her fährt)
+                f_coord = fahrer_coords[f]
+                sortierte_mitfahrer = []
+                unbesucht = zugewiesene_mitfahrer.copy()
+                aktueller_standort = f_coord
+                
+                while unbesucht:
+                    # Suche den nächsten Mitfahrer vom aktuellen Standort aus
+                    naechster = min(unbesucht, key=lambda x: geodesic(aktueller_standort, mitfahrer_coords[x]).km)
+                    sortierte_mitfahrer.append(naechster)
+                    aktueller_standort = mitfahrer_coords[naechster]
+                    unbesucht.remove(naechster)
+                
+                # Mitfahrer anzeigen
+                st.write("**Mitfahrer (in Abhol-Reihenfolge):**")
+                for i, m in enumerate(sortierte_mitfahrer):
+                    st.write(f"{i+1}. {m} ({alle_personen[m]})")
+                
+                # Google Maps Link zusammenbauen
+                url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
+                url_dest = urllib.parse.quote(ziel)
+                
+                wegpunkte = []
+                for m in sortierte_mitfahrer:
+                    wegpunkte.append(urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland"))
+                url_waypoints = "|".join(wegpunkte)
+                
+                gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}&waypoints={url_waypoints}"
+                
+                st.markdown(f"**[📍 Google Maps Route für {f} öffnen]({gmaps_link})**")
+            
+            st.write("---")
