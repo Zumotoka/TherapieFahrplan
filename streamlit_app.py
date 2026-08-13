@@ -6,7 +6,7 @@ import urllib.parse
 st.set_page_config(page_title="Therapie-Fahrplan", page_icon="🚗")
 
 st.title("🚗 Therapie-Fahrplan")
-st.write("Verteile die Fahrer und generiere direkte Google Maps Navi-Links!")
+st.write("Verteile die Fahrer intelligent, beachte die Auto-Kapazität (max. 4 Mitfahrer) und generiere direkte Navi-Links!")
 
 # --- 1. GEODATEN FUNKTION ---
 @st.cache_data
@@ -81,80 +81,85 @@ if st.button("🚗 Routen & Aufteilung berechnen"):
     elif not ziel:
         st.error("Bitte gib ein Ziel ein!")
     else:
-        st.info("Berechne die optimalen Zuteilungen...")
-        
-        # Koordinaten für alle abrufen
-        fahrer_coords = {f: get_coordinates(alle_personen[f]) for f in fahrer}
-        mitfahrer_coords = {m: get_coordinates(alle_personen[m]) for m in mitfahrer}
-        
-        # Aufteilung: Jeder Mitfahrer sucht sich den Fahrer, der ihm am nächsten ist
-        aufteilung = {f: [] for f in fahrer}
-        
-        for m, m_coord in mitfahrer_coords.items():
-            if not m_coord:
-                st.warning(f"Ort für {m} ({alle_personen[m]}) nicht gefunden!")
-                continue
-                
-            # Finde den nächsten Fahrer
-            naechster_fahrer = None
-            min_distanz = float('inf')
+        # Checken, ob wir überhaupt genug Autos für alle haben (1 Fahrer = 4 Mitfahrer)
+        max_kapazitaet = len(fahrer) * 4
+        if len(mitfahrer) > max_kapazitaet:
+            st.error(f"Achtung! Ihr habt {len(mitfahrer)} Mitfahrer, aber {len(fahrer)} Autos können maximal {max_kapazitaet} Personen mitnehmen. Ihr braucht noch einen Fahrer!")
+        else:
+            st.info("Berechne die optimalen Zuteilungen...")
             
-            for f, f_coord in fahrer_coords.items():
-                if f_coord:
-                    distanz = geodesic(f_coord, m_coord).km
-                    if distanz < min_distanz:
-                        min_distanz = distanz
-                        naechster_fahrer = f
-                        
-            if naechster_fahrer:
-                aufteilung[naechster_fahrer].append(m)
+            # Koordinaten abrufen
+            fahrer_coords = {f: get_coordinates(alle_personen[f]) for f in fahrer}
+            mitfahrer_coords = {m: get_coordinates(alle_personen[m]) for m in mitfahrer}
+            
+            aufteilung = {f: [] for f in fahrer}
+            unverteilt = list(mitfahrer)
+            
+            # Alle möglichen Kombinationen (Fahrer <-> Mitfahrer) berechnen
+            distanz_liste = []
+            for m in unverteilt:
+                m_coord = mitfahrer_coords[m]
+                if not m_coord:
+                    st.warning(f"Ort für {m} ({alle_personen[m]}) nicht gefunden!")
+                    unverteilt.remove(m)
+                    continue
+                for f in fahrer:
+                    f_coord = fahrer_coords[f]
+                    if f_coord:
+                        dist = geodesic(f_coord, m_coord).km
+                        distanz_liste.append((dist, f, m))
+            
+            # Nach kürzester Distanz sortieren
+            distanz_liste.sort(key=lambda x: x[0])
+            
+            # Zuteilung durchführen (mit Limit von 4 Mitfahrern pro Auto)
+            for dist, f, m in distanz_liste:
+                if m in unverteilt and len(aufteilung[f]) < 4:
+                    aufteilung[f].append(m)
+                    unverteilt.remove(m)
 
-        # Routen sortieren und Links generieren
-        st.success("Hier sind die fertigen Fahrpläne!")
-        
-        for f in fahrer:
-            st.subheader(f"🚘 Auto von {f}")
-            f_ort = alle_personen[f]
-            zugewiesene_mitfahrer = aufteilung[f]
+            st.success("Hier sind die fertigen Fahrpläne!")
             
-            if not zugewiesene_mitfahrer:
-                st.write("Fährt direkt zum Ziel (keine Mitfahrer).")
-                # Link ohne Wegpunkte
-                url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
-                url_dest = urllib.parse.quote(ziel)
-                gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}"
-                st.markdown(f"[📍 Google Maps Route für {f} öffnen]({gmaps_link})")
-            
-            else:
-                # Wegpunkte nach Entfernung vom Fahrer sortieren (damit er nicht hin und her fährt)
-                f_coord = fahrer_coords[f]
-                sortierte_mitfahrer = []
-                unbesucht = zugewiesene_mitfahrer.copy()
-                aktueller_standort = f_coord
+            # Routen für jeden Fahrer erstellen
+            for f in fahrer:
+                st.subheader(f"🚘 Auto von {f}")
+                f_ort = alle_personen[f]
+                zugewiesene_mitfahrer = aufteilung[f]
                 
-                while unbesucht:
-                    # Suche den nächsten Mitfahrer vom aktuellen Standort aus
-                    naechster = min(unbesucht, key=lambda x: geodesic(aktueller_standort, mitfahrer_coords[x]).km)
-                    sortierte_mitfahrer.append(naechster)
-                    aktueller_standort = mitfahrer_coords[naechster]
-                    unbesucht.remove(naechster)
+                if not zugewiesene_mitfahrer:
+                    st.write("Fährt direkt zum Ziel (keine Mitfahrer).")
+                    url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
+                    url_dest = urllib.parse.quote(ziel)
+                    gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}"
+                    st.markdown(f"[📍 Google Maps Route für {f} öffnen]({gmaps_link})")
                 
-                # Mitfahrer anzeigen
-                st.write("**Mitfahrer (in Abhol-Reihenfolge):**")
-                for i, m in enumerate(sortierte_mitfahrer):
-                    st.write(f"{i+1}. {m} ({alle_personen[m]})")
+                else:
+                    # Wegpunkte so sortieren, dass das Auto logisch von Ort zu Ort fährt
+                    f_coord = fahrer_coords[f]
+                    sortierte_mitfahrer = []
+                    unbesucht = zugewiesene_mitfahrer.copy()
+                    aktueller_standort = f_coord
+                    
+                    while unbesucht:
+                        naechster = min(unbesucht, key=lambda x: geodesic(aktueller_standort, mitfahrer_coords[x]).km)
+                        sortierte_mitfahrer.append(naechster)
+                        aktueller_standort = mitfahrer_coords[naechster]
+                        unbesucht.remove(naechster)
+                    
+                    # Liste der Mitfahrer anzeigen
+                    st.write(f"**Mitfahrer ({len(sortierte_mitfahrer)}/4 Plätze belegt):**")
+                    for i, m in enumerate(sortierte_mitfahrer):
+                        st.write(f"{i+1}. {m} ({alle_personen[m]})")
+                    
+                    # Google Maps Link zusammenbauen
+                    url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
+                    url_dest = urllib.parse.quote(ziel)
+                    
+                    wegpunkte = [urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland") for m in sortierte_mitfahrer]
+                    url_waypoints = "|".join(wegpunkte)
+                    
+                    gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}&waypoints={url_waypoints}"
+                    
+                    st.markdown(f"**[📍 Google Maps Route für {f} öffnen]({gmaps_link})**")
                 
-                # Google Maps Link zusammenbauen
-                url_origin = urllib.parse.quote(f"{f_ort}, Bayern, Deutschland")
-                url_dest = urllib.parse.quote(ziel)
-                
-                wegpunkte = []
-                for m in sortierte_mitfahrer:
-                    wegpunkte.append(urllib.parse.quote(f"{alle_personen[m]}, Bayern, Deutschland"))
-                url_waypoints = "|".join(wegpunkte)
-                
-                gmaps_link = f"https://www.google.com/maps/dir/?api=1&origin={url_origin}&destination={url_dest}&waypoints={url_waypoints}"
-                
-                st.markdown(f"**[📍 Google Maps Route für {f} öffnen]({gmaps_link})**")
-            
-            st.write("---")
+                st.write("---")
